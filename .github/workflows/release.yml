@@ -106,6 +106,7 @@ jobs:
         shell: bash
         run: |
           set -e
+          export NBT_DESKTOP_SMOKE=1
           if [ "$RUNNER_OS" = "Windows" ]; then
             # Real smoke runs first on a clean machine: capture the Java
             # process' stdout/stderr (jpackage launcher inherits handles), then

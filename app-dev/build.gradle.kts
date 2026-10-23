@@ -19,6 +19,7 @@ kotlin {
             implementation(project(":shared"))
             implementation(project(":desktop-shell"))
 
+            implementation(compose.desktop.currentOs)
             implementation(compose.desktop.common)
             implementation(libs.kotlinx.coroutines)
         }
