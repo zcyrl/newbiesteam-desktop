@@ -108,6 +108,23 @@ jobs:
           set -e
           export NBT_DESKTOP_SMOKE=1
           if [ "$RUNNER_OS" = "Windows" ]; then
+            # Windows diagnostics first: the GUI-subsystem launcher swallows
+            # stderr, so replicate its runtime directly to see real errors.
+            powershell -NoProfile -Command "
+              \$app = 'app-public\build\compose\binaries\main\app\NewbiesTeam';
+              Write-Host '--- APP TREE ---';
+              Get-ChildItem \$app -Recurse | Select-Object -ExpandProperty FullName;
+              Write-Host '--- CFG ---';
+              Get-Content (Join-Path \$app 'NewbiesTeam.cfg') -ErrorAction Continue | ForEach-Object { Write-Host \$_ };
+              Write-Host '--- BUNDLED JAVA -VERSION ---';
+              & (Join-Path \$app 'runtime\bin\java.exe') -version 2>&1 | ForEach-Object { Write-Host \$_ };
+              Write-Host ('java -version exit=' + \$LASTEXITCODE);
+              Write-Host '--- LAUNCHER 6s PROBE ---';
+              \$p = Start-Process -FilePath (Join-Path \$app 'NewbiesTeam.exe') -PassThru;
+              Start-Sleep -Seconds 6;
+              if (Get-Process -Id \$p.Id -ErrorAction SilentlyContinue) { Write-Host ('launcher alive after 6s pid=' + \$p.Id); Stop-Process -Id \$p.Id -Force }
+              else { Write-Host ('launcher exited within 6s code=' + \$p.ExitCode) }
+            "
             for W in 'app-public\build\compose\binaries\main\app\NewbiesTeam\NewbiesTeam.exe' \
                      'app-dev\build\compose\binaries\main\app\NewbiesDev\NewbiesDev.exe'; do
               powershell -NoProfile -Command "
