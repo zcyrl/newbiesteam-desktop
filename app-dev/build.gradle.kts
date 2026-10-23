@@ -88,3 +88,16 @@ compose.desktop {
         }
     }
 }
+
+// CMP quirk: the jpackage installer tasks (Dmg/Pkg/Msi/Deb/Rpm) read the shared
+// `compose/binaries/main/app` output directory that packageAppImage produces,
+// but Gradle's strict task-output validation fails when both run in one build
+// ("uses this output of task ':x:packageAppImage' without declaring an
+// explicit or implicit dependency"). Declare it explicitly.
+afterEvaluate {
+    tasks.matching {
+        it.name in listOf("packageDmg", "packagePkg", "packageMsi", "packageDeb", "packageRpm")
+    }.configureEach {
+        dependsOn(tasks.named("packageAppImage"))
+    }
+}

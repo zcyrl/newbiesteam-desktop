@@ -55,16 +55,18 @@ jobs:
         id: jbr
         shell: bash
         run: |
-          ROOT="$RUNNER_TEMP/jbrsrv"
-          mkdir -p "$ROOT"
-          curl -fL --retry 3 -o "$RUNNER_TEMP/jbr.tar.gz" "$JBR_BASE/${{ matrix.jbr }}"
-          # Windows GNU tar treats "D:\..." paths as remote hosts; --force-local
-          # keeps them on disk. macOS SDKs nest java under Contents/Home/bin.
-          if [ "$RUNNER_OS" = "Windows" ]; then
-            tar --force-local -xzf "$RUNNER_TEMP/jbr.tar.gz" -C "$ROOT"
+          # Windows git-bash tar mangles "D:\..." drive paths; convert to POSIX
+          # (/d/a/...) so tar/curl never see a colon.
+          if command -v cygpath >/dev/null 2>&1; then
+            TMP_POSIX=$(cygpath -u "$RUNNER_TEMP")
           else
-            tar -xzf "$RUNNER_TEMP/jbr.tar.gz" -C "$ROOT"
+            TMP_POSIX="$RUNNER_TEMP"
           fi
+          ROOT="$TMP_POSIX/jbrsrv"
+          mkdir -p "$ROOT"
+          curl -fL --retry 3 -o "$TMP_POSIX/jbr.tar.gz" "$JBR_BASE/${{ matrix.jbr }}"
+          # macOS SDKs nest java under Contents/Home — search 4 levels deep.
+          tar -xzf "$TMP_POSIX/jbr.tar.gz" -C "$ROOT"
           HOME_DIR=$(find "$ROOT" -maxdepth 4 -type d -name bin | head -1 | sed 's|/bin$||')
           if [ ! -x "$HOME_DIR/bin/java" ] && [ ! -f "$HOME_DIR/bin/java.exe" ]; then
             echo "java executable not found after tar extraction" >&2
@@ -72,7 +74,7 @@ jobs:
             find "$ROOT" -maxdepth 4 | head -20 >&2
             exit 1
           fi
-          echo "home=$HOME_DIR" >> "$GITHUB_OUTPUT"
+          echo "home=$(cygpath -w "$HOME_DIR" 2>/dev/null || echo "$HOME_DIR")" >> "$GITHUB_OUTPUT"
 
       # macOS only: build the .icns from the committed .iconset PNGs (iconutil
       # is a macOS-only tool, so the repo itself cannot ship the icns binaries).
@@ -118,8 +120,9 @@ jobs:
             done
           elif [ "$RUNNER_OS" = "Linux" ]; then
             command -v xvfb-run >/dev/null 2>&1 || { sudo apt-get update -qq; sudo apt-get install -y -qq xvfb; }
-            for B in app-public/build/compose/binaries/main/app/NewbiesTeam/NewbiesTeam \
-                     app-dev/build/compose/binaries/main/app/NewbiesDev/NewbiesDev; do
+            # jpackage app images keep the launcher under bin/
+            for B in app-public/build/compose/binaries/main/app/NewbiesTeam/bin/NewbiesTeam \
+                     app-dev/build/compose/binaries/main/app/NewbiesDev/bin/NewbiesDev; do
               timeout 180 xvfb-run -a "./$B"
             done
           else
