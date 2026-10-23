@@ -16,6 +16,22 @@ build/
 kcef-bundle/
 .cef-cache/
 
+# Never commit credentials, signing material or capability values
+app-dev/src/main/resources/newbies-dev-ui/config-overrides.js
+keys.txt
+.relay-keys.json
+auth-raw*
+*.jks
+*.keystore
+*.pem
+*.key
+*credentials*
+.env
+.env.*
+
+# Internal dev playbook (local only)
+/AGENTS.md
+
 # Arch build workareas
 /.archbuild/
 /bundles/

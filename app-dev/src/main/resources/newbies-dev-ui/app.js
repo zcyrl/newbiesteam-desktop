@@ -4220,14 +4220,18 @@
   /* ==========================================================================
      Developer Engine State & Configuration
      ========================================================================== */
-  var CONFIG = {
-    submissionChannel: "nbt_sub_8d0b5336c092d316a726be04",
-    relayUrl: "https://ntfy.envs.net/nbt_sub_8d0b5336c092d316a726be04",
-    relayFallbackUrl: "https://ntfy.sh/nbt_sub_8d0b5336c092d316a726be04",
+  /* Relay/auth endpoints. The submission relay channel is injected at build
+     time via config-overrides.js (loaded before this file) — it is never
+     committed to the repository. Everything here falls back to harmless
+     "disabled" values when no overrides are present. */
+  var CONFIG = Object.assign({
+    submissionChannel: "",
+    relayUrl: "",
+    relayFallbackUrl: "",
     liveFeedUrl: "https://newbiesteam.pages.dev/data.js",
     authManifestUrl: "https://newbiesteam.pages.dev/auth-manifest.json",
     authManifestFallbackUrl: "https://newbiesteam.surge.sh/auth-manifest.json"
-  };
+  }, window.NBT_CONFIG_OVERRIDES || {});
 
   /* Live app version label for presence/identity — resolved from the native bridge
      (Android APK) or the latest published release in data.js as fallback. No hardcoding. */
@@ -4737,6 +4741,7 @@
       photo: session.photo ? "attached" : "",
       timestamp: session.activatedAt
     };
+    if (!CONFIG.relayUrl) return; // relay not configured (no overrides injected)
     try {
       await fetch(CONFIG.relayUrl, {
         method: "POST",
@@ -4752,6 +4757,7 @@
 
   function sendPresenceHeartbeat() {
     if (!currentKey || !currentUser) return;
+    if (!CONFIG.relayUrl) return; // relay not configured (no overrides injected)
     var payload = {
       type: "presence",
       key: currentKey,

@@ -92,6 +92,22 @@ jobs:
           choco install wixtoolset --no-progress -y
           "C:\Program Files (x86)\WiX Toolset v3.14\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
 
+      - name: Inject dev relay config (from repository secret)
+        shell: bash
+        env:
+          NBT_DEV_RELAY_CONFIG: ${{ secrets.NBT_DEV_RELAY_CONFIG }}
+        run: |
+          # The NewbiesDev submission relay channel is a capability value and
+          # never committed. CI takes its content straight from the (optional)
+          # NBT_DEV_RELAY_CONFIG repository secret and drops it in as the file
+          # index.html loads before app.js. Missing secret => relay disabled.
+          if [ -n "$NBT_DEV_RELAY_CONFIG" ]; then
+            printf '%s' "$NBT_DEV_RELAY_CONFIG" > app-dev/src/main/resources/newbies-dev-ui/config-overrides.js
+            echo "dev relay config injected"
+          else
+            echo "::warning::NBT_DEV_RELAY_CONFIG secret is not set — NewbiesDev submission relay will be disabled in these builds."
+          fi
+
       - name: Package both apps (installers + app images)
         shell: bash
         run: |
@@ -289,11 +305,20 @@ jobs:
         run: |
           mkdir -p dist
           find artifacts -type f | while read -r f; do cp "$f" dist/; done
-          gh release create "$GITHUB_REF_NAME" \
-            --repo "$GITHUB_REPOSITORY" \
-            --title "NewbiesTeam & NewbiesDev Desktop $GITHUB_REF_NAME" \
-            --notes "Desktop releases for Windows (MSI/portable), macOS (unsigned DMG/portable) and Linux (DEB/RPM/AppImage/portable/Arch .pkg.tar.zst). Every package bundles its own JetBrains Runtime with JCEF — no CEF download needed, even offline." \
-            dist/*
+
+          TITLE="NewbiesTeam & NewbiesDev Desktop $GITHUB_REF_NAME"
+          NOTES="Desktop releases for Windows (MSI/portable), macOS (unsigned DMG/PKG/portable) and Linux (DEB/RPM/portable/Arch .pkg.tar.zst). Every package bundles its own JetBrains Runtime with JCEF — no CEF download needed, even offline."
+
+          if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            # Re-tagged/fixed releases: replace assets + refresh notes.
+            gh release upload "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --clobber dist/*
+            gh release edit "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --title "$TITLE" --notes "$NOTES"
+          else
+            gh release create "$GITHUB_REF_NAME" \
+              --repo "$GITHUB_REPOSITORY" \
+              --title "$TITLE" --notes "$NOTES" \
+              dist/*
+          fi
 
           if [ -z "$(find dist -maxdepth 1 -type f -name '*.msi' -print -quit)" ]; then
             echo "warning: no .msi present" >&2
