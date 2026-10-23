@@ -15,13 +15,23 @@ kotlin {
     }
 
     sourceSets {
-        jvmMain.dependencies {
-            implementation(project(":shared"))
-            implementation(project(":desktop-shell"))
+        jvmMain {
+            dependencies {
+                implementation(project(":shared"))
+                implementation(project(":desktop-shell"))
 
-            implementation(compose.desktop.currentOs)
-            implementation(compose.desktop.common)
-            implementation(libs.kotlinx.coroutines)
+                implementation(compose.desktop.currentOs)
+                implementation(compose.desktop.common)
+                implementation(libs.kotlinx.coroutines)
+            }
+
+            // NewbiesDev bundles its portal UI (web hub port) as JVM resources.
+            // Kotlin Multiplatform only picks up `src/jvmMain/resources` by
+            // default; the UI lives in `src/main/resources/newbies-dev-ui/`
+            // (served by desktop-shell's DevUiServer via the classloader), so
+            // it must be wired in explicitly or packaged builds ship with a
+            // blank portal.
+            resources.srcDir("src/main/resources")
         }
     }
 }
