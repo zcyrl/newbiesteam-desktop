@@ -25,7 +25,9 @@ WORK_BASE="$ROOT/.archbuild"
 if [ "$(id -u)" = "0" ]; then
   # Container mode: tooling + dedicated non-root build user.
   if command -v pacman >/dev/null 2>&1; then
-    pacman -Syu --needed --noconfirm unzip fakeroot git curl >/dev/null
+    # debugedit is mandatory even for normal package builds: makepkg 7.x uses
+    # it to stamp source-file metadata into .PKGINFO.
+    pacman -Syu --needed --noconfirm unzip fakeroot git curl debugedit >/dev/null
   fi
   if ! id builder >/dev/null 2>&1; then
     useradd -m builder
