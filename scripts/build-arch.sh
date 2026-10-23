@@ -30,9 +30,13 @@ if [ "$(id -u)" = "0" ]; then
   if ! id builder >/dev/null 2>&1; then
     useradd -m builder
   fi
-  mkdir -p "$OUT" "$WORK_BASE"
-  chown builder:builder "$OUT" "$WORK_BASE"
 fi
+
+# makepkg 7.x dropped the --srcdest/--pkgdest CLI options. SRCDEST, PKGDEST,
+# PKGEXT and SRCEXT are honored as environment variables though: makepkg's
+# load_makepkg_config preserves them and re-applies them after sourcing the
+# system config (which still supplies CARCH/CHOST and the other defaults).
+mkdir -p "$OUT" "$WORK_BASE"
 
 build_one() {
   local app="$1"      # newbiesteam | newbiesdev
@@ -54,17 +58,32 @@ build_one() {
   }
 
   rm -rf "$work"
-  mkdir -p "$work"
+  mkdir -p "$work/src"
   cp "$pkgdir/PKGBUILD" "$work/"
   cp "$ROOT/packaging/icons/$app.png" "$work/$app-icon.png"
   cp "$zip_path" "$work/"
 
+  # makepkg reads SRCDEST/PKGDEST/PKGEXT/SRCEXT/PACKAGER from the environment
+  # (load_makepkg_config preserves them over the system config); a wrapper
+  # script keeps the quoting intact for the `su` drop-privileges call.
+  cat > "$work/run-makepkg.sh" <<EOF
+#!/bin/bash
+set -e
+cd '$work'
+export SRCDEST='$work/src'
+export PKGDEST='$OUT'
+export PKGEXT='.pkg.tar.zst'
+export SRCEXT='.src.tar.zst'
+export PACKAGER='NewbiesTeam <softbrick@newbiesteam.dev>'
+exec makepkg --force --noconfirm --skipinteg
+EOF
+  chmod 755 "$work/run-makepkg.sh"
+
   if [ "$(id -u)" = "0" ]; then
     chown -R builder:builder "$work"
-    su builder -s /bin/bash -c \
-      "cd '$work' && makepkg -f --noconfirm --skipinteg --srcdest '$work/src' --pkgdest '$OUT'"
+    su builder -s /bin/bash -c "bash '$work/run-makepkg.sh'"
   else
-    ( cd "$work" && makepkg -f --noconfirm --skipinteg --srcdest "$work/src" --pkgdest "$OUT" )
+    bash "$work/run-makepkg.sh"
   fi
 }
 

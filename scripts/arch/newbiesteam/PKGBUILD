@@ -11,8 +11,11 @@ pkgdesc="NewbiesTeam — GT 20 Pro Web Hub (desktop companion, bundled JBR+JCEF)
 url="https://github.com/zcyrl/newbiesteam-desktop"
 arch=('x86_64')
 license=('custom:unofficial')
+# The portable zip is staged next to this PKGBUILD by scripts/build-arch.sh
+# (it is the same artifact the release hosts); local-only source keeps makepkg
+# fully offline. Integrity is skipped via `makepkg --skipinteg`.
 source=(
-  "newbiesteam-$pkgver-linux-portable.zip::https://github.com/zcyrl/newbiesteam-desktop/releases/download/v$pkgver/newbiesteam-$pkgver-linux-portable.zip"
+  "newbiesteam-$pkgver-linux-portable.zip"
   "newbiesteam-icon.png"
 )
 sha256sums=('SKIP' 'SKIP')

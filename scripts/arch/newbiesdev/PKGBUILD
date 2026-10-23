@@ -11,7 +11,7 @@ url="https://github.com/zcyrl/newbiesteam-desktop"
 arch=('x86_64')
 license=('custom:unofficial')
 source=(
-  "newbiesdev-$pkgver-linux-portable.zip::https://github.com/zcyrl/newbiesteam-desktop/releases/download/v$pkgver/newbiesdev-$pkgver-linux-portable.zip"
+  "newbiesdev-$pkgver-linux-portable.zip"
   "newbiesdev-icon.png"
 )
 sha256sums=('SKIP' 'SKIP')
