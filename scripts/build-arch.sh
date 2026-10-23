@@ -37,6 +37,11 @@ fi
 # load_makepkg_config preserves them and re-applies them after sourcing the
 # system config (which still supplies CARCH/CHOST and the other defaults).
 mkdir -p "$OUT" "$WORK_BASE"
+if [ "$(id -u)" = "0" ]; then
+  # In container mode makepkg runs as `builder`; the output dirs must be
+  # writable by it.
+  chown builder:builder "$OUT" "$WORK_BASE"
+fi
 
 build_one() {
   local app="$1"      # newbiesteam | newbiesdev
