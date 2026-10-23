@@ -40,10 +40,14 @@ build_one() {
   local pkgdir="$ROOT/scripts/arch/$app"
   local work="$WORK_BASE/$app"
 
-  [ -f "$BUNDLES/$zipname" ] || { echo "missing bundle: $BUNDLES/$zipname" >&2; exit 1; }
+  # The CI artifact preserves the upload dir layout (bundles/out/…), so locate
+  # the portable zip wherever it landed inside BUNDLES.
+  local zip_path
+  zip_path="$(find "$BUNDLES" -type f -name "$zipname" -print -quit)"
+  [ -n "$zip_path" ] || { echo "missing bundle: $zipname" >&2; exit 1; }
   [ -f "$ROOT/packaging/icons/$app.png" ] || { echo "missing icon packaging/icons/$app.png" >&2; exit 1; }
   local zip_size
-  zip_size=$(stat -c '%s' "$BUNDLES/$zipname")
+  zip_size=$(stat -c '%s' "$zip_path")
   [ "$zip_size" -gt 1000000 ] || {
     echo "bundle suspiciously small ($zip_size bytes) — not a real release zip" >&2
     exit 1
@@ -53,7 +57,7 @@ build_one() {
   mkdir -p "$work"
   cp "$pkgdir/PKGBUILD" "$work/"
   cp "$ROOT/packaging/icons/$app.png" "$work/$app-icon.png"
-  cp "$BUNDLES/$zipname" "$work/"
+  cp "$zip_path" "$work/"
 
   if [ "$(id -u)" = "0" ]; then
     chown -R builder:builder "$work"
