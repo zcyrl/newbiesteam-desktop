@@ -86,10 +86,18 @@ object KcefSupport {
         }
     }
 
-    /** CI smoke-test helper: does this java runtime already ship JCEF (jbrsdk_jcef)? */
+    /** CI smoke-test helper: does this java runtime already ship JCEF (jbrsdk_jcef)?
+     *
+     * Layouts: Linux/macOS JDK put native libs in `lib/`, Windows in `bin/`.
+     */
     fun runtimeHasBundledJcef(): Boolean {
         val home = System.getProperty("java.home") ?: return false
-        val libDir = File(File(home), "lib")
-        return libDir.listFiles { f -> f.name.startsWith("libcef") || f.name.startsWith("libjcef") }?.isNotEmpty() == true
+        val hf = File(home)
+        val dirs = listOf(hf.resolve("lib"), hf.resolve("bin"), hf.resolve("lib").resolve("server"))
+        return dirs.any { dir ->
+            dir.isDirectory && dir.listFiles { f ->
+                f.name.startsWith("libcef") || f.name.startsWith("libjcef")
+            }?.isNotEmpty() == true
+        }
     }
 }

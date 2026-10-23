@@ -58,10 +58,18 @@ jobs:
           ROOT="$RUNNER_TEMP/jbrsrv"
           mkdir -p "$ROOT"
           curl -fL --retry 3 -o "$RUNNER_TEMP/jbr.tar.gz" "$JBR_BASE/${{ matrix.jbr }}"
-          tar -xzf "$RUNNER_TEMP/jbr.tar.gz" -C "$ROOT"
-          HOME_DIR=$(find "$ROOT" -maxdepth 2 -type d -name bin | head -1 | sed 's|/bin$||')
+          # Windows GNU tar treats "D:\..." paths as remote hosts; --force-local
+          # keeps them on disk. macOS SDKs nest java under Contents/Home/bin.
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            tar --force-local -xzf "$RUNNER_TEMP/jbr.tar.gz" -C "$ROOT"
+          else
+            tar -xzf "$RUNNER_TEMP/jbr.tar.gz" -C "$ROOT"
+          fi
+          HOME_DIR=$(find "$ROOT" -maxdepth 4 -type d -name bin | head -1 | sed 's|/bin$||')
           if [ ! -x "$HOME_DIR/bin/java" ] && [ ! -f "$HOME_DIR/bin/java.exe" ]; then
             echo "java executable not found after tar extraction" >&2
+            echo "search root was: $ROOT" >&2
+            find "$ROOT" -maxdepth 4 | head -20 >&2
             exit 1
           fi
           echo "home=$HOME_DIR" >> "$GITHUB_OUTPUT"
@@ -90,53 +98,46 @@ jobs:
             :app-dev:packageDistributionForCurrentOS \
             --stacktrace
 
-      - name: Smoke test — NewbiesTeam (CEF engine init proof)
+      # Output paths: compose writes into <module>/build/compose/binaries/main/
+      # (app images under app/, installers under msi|deb|rpm|dmg|pkg/).
+      - name: Smoke test (CEF engine init proof — both apps)
         shell: bash
         run: |
+          set -e
+          export NBT_DESKTOP_SMOKE=1
           if [ "$RUNNER_OS" = "Windows" ]; then
-            powershell -NoProfile -Command "
-              \$env:NBT_DESKTOP_SMOKE = '1';
-              \$p = Start-Process -FilePath 'compose\binaries\main\app\NewbiesTeam\NewbiesTeam.exe' -PassThru;
-              try { Wait-Process -Id \$p.Id -Timeout 180 -ErrorAction Stop } catch {};
-              if (-not \$p.HasExited) { Stop-Process -Id \$p.Id -Force; exit 1 };
-              exit \$p.ExitCode
-            "
+            for W in 'app-public\build\compose\binaries\main\app\NewbiesTeam\NewbiesTeam.exe' \
+                     'app-dev\build\compose\binaries\main\app\NewbiesDev\NewbiesDev.exe'; do
+              powershell -NoProfile -Command "
+                \$env:NBT_DESKTOP_SMOKE = '1';
+                \$p = Start-Process -FilePath '$W' -PassThru;
+                try { Wait-Process -Id \$p.Id -Timeout 180 -ErrorAction Stop } catch {};
+                if (-not \$p.HasExited) { Stop-Process -Id \$p.Id -Force; exit 1 };
+                exit \$p.ExitCode
+              "
+            done
+          elif [ "$RUNNER_OS" = "Linux" ]; then
+            command -v xvfb-run >/dev/null 2>&1 || { sudo apt-get update -qq; sudo apt-get install -y -qq xvfb; }
+            for B in app-public/build/compose/binaries/main/app/NewbiesTeam/NewbiesTeam \
+                     app-dev/build/compose/binaries/main/app/NewbiesDev/NewbiesDev; do
+              timeout 180 xvfb-run -a "./$B"
+            done
           else
-            if [ "$RUNNER_OS" = "Linux" ]; then
-              timeout 180 xvfb-run -a ./compose/binaries/main/app/NewbiesTeam/NewbiesTeam
-            else
-              # macOS runs a real Window Server but CEF headless quirks remain
-              # possible — treat a failure as an advisory warning, not a blocker.
-              if timeout 180 ./compose/binaries/main/app/NewbiesTeam.app/Contents/MacOS/NewbiesTeam; then
-                echo "macOS smoke ok"
+            # macOS runs a real Window Server but CEF headless quirks remain
+            # possible — treat a failure as an advisory warning, not a blocker.
+            # macOS has no GNU `timeout`; the app self-exits after its internal
+            # 90s CEF deadline, so run it directly.
+            for B in app-public/build/compose/binaries/main/app/NewbiesTeam.app/Contents/MacOS/NewbiesTeam \
+                     app-dev/build/compose/binaries/main/app/NewbiesDev.app/Contents/MacOS/NewbiesDev; do
+              if "./$B"; then
+                echo "macOS smoke ok: $B"
               else
-                echo "::warning::macOS smoke (advisory) exited with code $?"
+                echo "::warning::macOS smoke (advisory) failed: $B"
               fi
-            fi
+            done
+            exit 0
           fi
-
-      - name: Smoke test — NewbiesDev (CEF engine init proof)
-        shell: bash
-        run: |
-          if [ "$RUNNER_OS" = "Windows" ]; then
-            powershell -NoProfile -Command "
-              \$env:NBT_DESKTOP_SMOKE = '1';
-              \$p = Start-Process -FilePath 'compose\binaries\main\app\NewbiesDev\NewbiesDev.exe' -PassThru;
-              try { Wait-Process -Id \$p.Id -Timeout 180 -ErrorAction Stop } catch {};
-              if (-not \$p.HasExited) { Stop-Process -Id \$p.Id -Force; exit 1 };
-              exit \$p.ExitCode
-            "
-          else
-            if [ "$RUNNER_OS" = "Linux" ]; then
-              timeout 180 xvfb-run -a ./compose/binaries/main/app/NewbiesDev/NewbiesDev
-            else
-              if timeout 180 ./compose/binaries/main/app/NewbiesDev.app/Contents/MacOS/NewbiesDev; then
-                echo "macOS smoke ok"
-              else
-                echo "::warning::macOS smoke (advisory) exited with code $?"
-              fi
-            fi
-          fi
+          echo "smoke: both apps exited 0 — CEF engine ready"
 
       - name: Pack portable bundles (bash OSes)
         if: runner.os != 'Windows'
@@ -144,29 +145,49 @@ jobs:
         run: |
           V="${{ steps.ver.outputs.version }}"
           mkdir -p out
-          for APP in NewbiesTeam NewbiesDev; do
-            LOWER=$(echo "$APP" | tr 'A-Z' 'a-z')
+          (
+            cd app-public/build/compose/binaries/main/app
             if [ "$RUNNER_OS" = "macOS" ]; then
-              (cd compose/binaries/main/app && zip -qry "$OLDPWD/out/$LOWER-$V-mac-portable.zip" "$APP.app")
+              zip -qry "$OLDPWD/out/newbiesteam-$V-mac-portable.zip" NewbiesTeam.app
             else
-              (cd compose/binaries/main/app && zip -qry "$OLDPWD/out/$LOWER-$V-linux-portable.zip" "$APP")
+              zip -qry "$OLDPWD/out/newbiesteam-$V-linux-portable.zip" NewbiesTeam
             fi
-          done
+          )
+          (
+            cd app-dev/build/compose/binaries/main/app
+            if [ "$RUNNER_OS" = "macOS" ]; then
+              zip -qry "$OLDPWD/out/newbiesdev-$V-mac-portable.zip" NewbiesDev.app
+            else
+              zip -qry "$OLDPWD/out/newbiesdev-$V-linux-portable.zip" NewbiesDev
+            fi
+          )
+          ls -la out/
 
       - name: Pack portable bundles (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path out | Out-Null
-          Compress-Archive -Path compose\binaries\main\app\NewbiesTeam -DestinationPath out\newbiesteam-${{ steps.ver.outputs.version }}-win-portable.zip -Force
-          Compress-Archive -Path compose\binaries\main\app\NewbiesDev  -DestinationPath out\newbiesdev-${{ steps.ver.outputs.version }}-win-portable.zip  -Force
+          Compress-Archive -Path app-public\build\compose\binaries\main\app\NewbiesTeam -DestinationPath out\newbiesteam-${{ steps.ver.outputs.version }}-win-portable.zip -Force
+          Compress-Archive -Path app-dev\build\compose\binaries\main\app\NewbiesDev  -DestinationPath out\newbiesdev-${{ steps.ver.outputs.version }}-win-portable.zip  -Force
 
       - name: Upload installers + portable bundles
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.os }}-bundles
           path: |
-            compose/binaries/main/distributions/*
+            app-public/build/compose/binaries/main/distributions/*
+            app-dev/build/compose/binaries/main/distributions/*
+            app-public/build/compose/binaries/main/deb/*
+            app-dev/build/compose/binaries/main/deb/*
+            app-public/build/compose/binaries/main/rpm/*
+            app-dev/build/compose/binaries/main/rpm/*
+            app-public/build/compose/binaries/main/dmg/*
+            app-dev/build/compose/binaries/main/dmg/*
+            app-public/build/compose/binaries/main/msi/*
+            app-dev/build/compose/binaries/main/msi/*
+            app-public/build/compose/binaries/main/pkg/*
+            app-dev/build/compose/binaries/main/pkg/*
             out/*.zip
           if-no-files-found: error
 
