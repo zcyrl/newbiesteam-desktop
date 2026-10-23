@@ -136,16 +136,20 @@ private fun runSmokeTest() {
                 "NBT smoke: CEF engine ready (dev server port=${devServer.port}, " +
                     "runtime jcef=${KcefSupport.runtimeHasBundledJcef()})"
             )
-            exitProcess(0)
+            // halt, not exitProcess: KCEF's background zygote threads can trap
+            // (SIGTRAP) between exit() and JVM teardown, mangling the smoke
+            // exit code (CI saw exit 133 after "engine ready"). Halt is an
+            // immediate OS-level exit and immune to that race.
+            Runtime.getRuntime().halt(0)
         }
         is KcefSupport.State.Error -> {
             System.err.println("NBT smoke: engine failed to initialize")
             state.throwable.printStackTrace()
-            exitProcess(3)
+            Runtime.getRuntime().halt(3)
         }
         else -> {
             System.err.println("NBT smoke: engine never reached ready state ($state)")
-            exitProcess(4)
+            Runtime.getRuntime().halt(4)
         }
     }
 }
