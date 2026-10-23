@@ -36,6 +36,9 @@ fi
 # PKGEXT and SRCEXT are honored as environment variables though: makepkg's
 # load_makepkg_config preserves them and re-applies them after sourcing the
 # system config (which still supplies CARCH/CHOST and the other defaults).
+# The output wipe must happen BEFORE the dirs are prepared + ownership set,
+# otherwise makepkg (as `builder`) cannot recreate a root-owned $PKGDEST.
+rm -rf "$OUT"
 mkdir -p "$OUT" "$WORK_BASE"
 if [ "$(id -u)" = "0" ]; then
   # In container mode makepkg runs as `builder`; the output dirs must be
@@ -92,7 +95,6 @@ EOF
   fi
 }
 
-rm -rf "$OUT"
 build_one newbiesteam "newbiesteam-$VER-linux-portable.zip"
 build_one newbiesdev  "newbiesdev-$VER-linux-portable.zip"
 
