@@ -106,35 +106,57 @@ jobs:
         shell: bash
         run: |
           set -e
-          export NBT_DESKTOP_SMOKE=1
           if [ "$RUNNER_OS" = "Windows" ]; then
-            # Windows diagnostics first: the GUI-subsystem launcher swallows
-            # stderr, so replicate its runtime directly to see real errors.
+            # Real smoke runs first on a clean machine: capture the Java
+            # process' stdout/stderr (jpackage launcher inherits handles), then
+            # a launcher-lifetime diagnostic runs last (never pollutes smoke).
+            c1=0; c2=0
             powershell -NoProfile -Command "
-              \$app = 'app-public\build\compose\binaries\main\app\NewbiesTeam';
-              Write-Host '--- APP TREE ---';
-              Get-ChildItem \$app -Recurse | Select-Object -ExpandProperty FullName;
-              Write-Host '--- CFG ---';
-              Get-Content (Join-Path \$app 'NewbiesTeam.cfg') -ErrorAction Continue | ForEach-Object { Write-Host \$_ };
-              Write-Host '--- BUNDLED JAVA -VERSION ---';
-              & (Join-Path \$app 'runtime\bin\java.exe') -version 2>&1 | ForEach-Object { Write-Host \$_ };
-              Write-Host ('java -version exit=' + \$LASTEXITCODE);
-              Write-Host '--- LAUNCHER 6s PROBE ---';
-              \$p = Start-Process -FilePath (Join-Path \$app 'NewbiesTeam.exe') -PassThru;
-              Start-Sleep -Seconds 6;
-              if (Get-Process -Id \$p.Id -ErrorAction SilentlyContinue) { Write-Host ('launcher alive after 6s pid=' + \$p.Id); Stop-Process -Id \$p.Id -Force }
-              else { Write-Host ('launcher exited within 6s code=' + \$p.ExitCode) }
+              \$exe = 'app-public\build\compose\binaries\main\app\NewbiesTeam\NewbiesTeam.exe';
+              \$appDir = 'app-public\build\compose\binaries\main\app\NewbiesTeam';
+              \$env:NBT_DESKTOP_SMOKE = '1';
+              \$p = Start-Process -FilePath \$exe -WorkingDirectory (Resolve-Path \$appDir).Path -NoNewWindow -RedirectStandardOutput nbt-pub-out.txt -RedirectStandardError nbt-pub-err.txt -PassThru;
+              \$o = \$p.WaitForExit(180000);
+              Write-Host '==== NewbiesTeam stdout ===='; Get-Content nbt-pub-out.txt -ErrorAction Continue;
+              Write-Host '==== NewbiesTeam stderr ===='; Get-Content nbt-pub-err.txt -ErrorAction Continue;
+              if (-not \$o) { Write-Host 'still running after 180s — killing'; Stop-Process -Id \$p.Id -Force; exit 1 };
+              Write-Host ('NewbiesTeam smoke exit=' + \$p.ExitCode);
+              exit \$p.ExitCode
+            " || c1=$?
+            powershell -NoProfile -Command "
+              \$exe = 'app-dev\build\compose\binaries\main\app\NewbiesDev\NewbiesDev.exe';
+              \$appDir = 'app-dev\build\compose\binaries\main\app\NewbiesDev';
+              \$env:NBT_DESKTOP_SMOKE = '1';
+              \$p = Start-Process -FilePath \$exe -WorkingDirectory (Resolve-Path \$appDir).Path -NoNewWindow -RedirectStandardOutput nbt-dev-out.txt -RedirectStandardError nbt-dev-err.txt -PassThru;
+              \$o = \$p.WaitForExit(180000);
+              Write-Host '==== NewbiesDev stdout ===='; Get-Content nbt-dev-out.txt -ErrorAction Continue;
+              Write-Host '==== NewbiesDev stderr ===='; Get-Content nbt-dev-err.txt -ErrorAction Continue;
+              if (-not \$o) { Write-Host 'still running after 180s — killing'; Stop-Process -Id \$p.Id -Force; exit 1 };
+              Write-Host ('NewbiesDev smoke exit=' + \$p.ExitCode);
+              exit \$p.ExitCode
+            " || c2=$?
+            echo "smoke result: NewbiesTeam=$c1 NewbiesDev=$c2"
+            powershell -NoProfile -Command "
+              \$root = (Get-Location).Path;
+              \$app = Join-Path \$root 'app-public\build\compose\binaries\main\app\NewbiesTeam';
+              \$java = Join-Path \$app 'runtime\bin\java.exe';
+              Write-Host ('--- bundled java exists: ' + (Test-Path \$java));
+              if (Test-Path \$java) {
+                & \$java -version 2>&1 | ForEach-Object { Write-Host \$_ };
+                Write-Host ('java -version exit=' + \$LASTEXITCODE);
+              }
+              Write-Host '--- cfg hunt ---';
+              Get-ChildItem \$app -Filter *.cfg -Recurse -ErrorAction SilentlyContinue | ForEach-Object { Write-Host \$_.FullName };
+              Write-Host '--- launcher lifetime probe (30s) ---';
+              \$p = Start-Process -FilePath (Join-Path \$app 'NewbiesTeam.exe') -WorkingDirectory \$app -PassThru;
+              \$start = Get-Date;
+              while (-not \$p.HasExited -and (((Get-Date) - \$start).TotalSeconds -lt 30)) { Start-Sleep -Seconds 3 };
+              if (-not \$p.HasExited) { Write-Host 'launcher alive after 30s — engine intact'; Stop-Process -Id \$p.Id -Force }
+              else { Write-Host ('launcher exited after ~' + [int](((Get-Date) - \$start).TotalSeconds) + 's code=' + \$p.ExitCode) }
+              exit 0
             "
-            for W in 'app-public\build\compose\binaries\main\app\NewbiesTeam\NewbiesTeam.exe' \
-                     'app-dev\build\compose\binaries\main\app\NewbiesDev\NewbiesDev.exe'; do
-              powershell -NoProfile -Command "
-                \$env:NBT_DESKTOP_SMOKE = '1';
-                \$p = Start-Process -FilePath '$W' -PassThru;
-                try { Wait-Process -Id \$p.Id -Timeout 180 -ErrorAction Stop } catch {};
-                if (-not \$p.HasExited) { Stop-Process -Id \$p.Id -Force; exit 1 };
-                exit \$p.ExitCode
-              "
-            done
+            [ "$c1" = 0 ] && [ "$c2" = 0 ]
+            echo "smoke: both apps exited 0 — CEF engine ready"
           elif [ "$RUNNER_OS" = "Linux" ]; then
             command -v xvfb-run >/dev/null 2>&1 || { sudo apt-get update -qq; sudo apt-get install -y -qq xvfb; }
             # jpackage app images keep the launcher under bin/
