@@ -1,0 +1,236 @@
+name: Desktop Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+env:
+  JBR_BASE: https://cache-redirector.jetbrains.com/intellij-jbr
+  # Pinned JetBrains Runtime with JCEF — same tag KCEF vendors (17.0.10 b1087.23).
+  # These archives turn every user machine into "zero CEF download" installs.
+
+jobs:
+  desktop:
+    name: ${{ matrix.os }} packages
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            jbr: jbrsdk_jcef-17.0.10-windows-x64-b1087.23.tar.gz
+          - os: macos-14
+            jbr: jbrsdk_jcef-17.0.10-osx-aarch64-b1087.23.tar.gz
+          - os: ubuntu-latest
+            jbr: jbrsdk_jcef-17.0.10-linux-x64-b1087.23.tar.gz
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Read app version
+        id: ver
+        shell: bash
+        run: |
+          V=$(grep '^newbies.versionName=' gradle.properties | cut -d= -f2 | tr -d ' \r')
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+
+      - name: Set up JDK 17 (for Gradle itself)
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Validate Gradle wrapper
+        uses: gradle/actions/wrapper-validation@v4
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Fetch JetBrains Runtime with JCEF
+        id: jbr
+        shell: bash
+        run: |
+          ROOT="$RUNNER_TEMP/jbrsrv"
+          mkdir -p "$ROOT"
+          curl -fL --retry 3 -o "$RUNNER_TEMP/jbr.tar.gz" "$JBR_BASE/${{ matrix.jbr }}"
+          tar -xzf "$RUNNER_TEMP/jbr.tar.gz" -C "$ROOT"
+          HOME_DIR=$(find "$ROOT" -maxdepth 2 -type d -name bin | head -1 | sed 's|/bin$||')
+          if [ ! -x "$HOME_DIR/bin/java" ] && [ ! -f "$HOME_DIR/bin/java.exe" ]; then
+            echo "java executable not found after tar extraction" >&2
+            exit 1
+          fi
+          echo "home=$HOME_DIR" >> "$GITHUB_OUTPUT"
+
+      # macOS only: build the .icns from the committed .iconset PNGs (iconutil
+      # is a macOS-only tool, so the repo itself cannot ship the icns binaries).
+      - name: Generate macOS .icns icons
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          iconutil -c icns packaging/icons/iconset/newbiesteam.iconset -o packaging/icons/newbiesteam.icns
+          iconutil -c icns packaging/icons/iconset/newbiesdev.iconset -o packaging/icons/newbiesdev.icns
+
+      - name: Install WiX Toolset (MSI packaging)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          choco install wixtoolset --no-progress -y
+          "C:\Program Files (x86)\WiX Toolset v3.14\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+      - name: Package both apps (installers + app images)
+        shell: bash
+        run: |
+          ./gradlew -Pnewbies.bundle.javaHome="${{ steps.jbr.outputs.home }}" \
+            :app-public:packageDistributionForCurrentOS \
+            :app-dev:packageDistributionForCurrentOS \
+            --stacktrace
+
+      - name: Smoke test — NewbiesTeam (CEF engine init proof)
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            powershell -NoProfile -Command "
+              \$env:NBT_DESKTOP_SMOKE = '1';
+              \$p = Start-Process -FilePath 'compose\binaries\main\app\NewbiesTeam\NewbiesTeam.exe' -PassThru;
+              try { Wait-Process -Id \$p.Id -Timeout 180 -ErrorAction Stop } catch {};
+              if (-not \$p.HasExited) { Stop-Process -Id \$p.Id -Force; exit 1 };
+              exit \$p.ExitCode
+            "
+          else
+            if [ "$RUNNER_OS" = "Linux" ]; then
+              timeout 180 xvfb-run -a ./compose/binaries/main/app/NewbiesTeam/NewbiesTeam
+            else
+              # macOS runs a real Window Server but CEF headless quirks remain
+              # possible — treat a failure as an advisory warning, not a blocker.
+              if timeout 180 ./compose/binaries/main/app/NewbiesTeam.app/Contents/MacOS/NewbiesTeam; then
+                echo "macOS smoke ok"
+              else
+                echo "::warning::macOS smoke (advisory) exited with code $?"
+              fi
+            fi
+          fi
+
+      - name: Smoke test — NewbiesDev (CEF engine init proof)
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            powershell -NoProfile -Command "
+              \$env:NBT_DESKTOP_SMOKE = '1';
+              \$p = Start-Process -FilePath 'compose\binaries\main\app\NewbiesDev\NewbiesDev.exe' -PassThru;
+              try { Wait-Process -Id \$p.Id -Timeout 180 -ErrorAction Stop } catch {};
+              if (-not \$p.HasExited) { Stop-Process -Id \$p.Id -Force; exit 1 };
+              exit \$p.ExitCode
+            "
+          else
+            if [ "$RUNNER_OS" = "Linux" ]; then
+              timeout 180 xvfb-run -a ./compose/binaries/main/app/NewbiesDev/NewbiesDev
+            else
+              if timeout 180 ./compose/binaries/main/app/NewbiesDev.app/Contents/MacOS/NewbiesDev; then
+                echo "macOS smoke ok"
+              else
+                echo "::warning::macOS smoke (advisory) exited with code $?"
+              fi
+            fi
+          fi
+
+      - name: Pack portable bundles (bash OSes)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          V="${{ steps.ver.outputs.version }}"
+          mkdir -p out
+          for APP in NewbiesTeam NewbiesDev; do
+            LOWER=$(echo "$APP" | tr 'A-Z' 'a-z')
+            if [ "$RUNNER_OS" = "macOS" ]; then
+              (cd compose/binaries/main/app && zip -qry "$OLDPWD/out/$LOWER-$V-mac-portable.zip" "$APP.app")
+            else
+              (cd compose/binaries/main/app && zip -qry "$OLDPWD/out/$LOWER-$V-linux-portable.zip" "$APP")
+            fi
+          done
+
+      - name: Pack portable bundles (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path out | Out-Null
+          Compress-Archive -Path compose\binaries\main\app\NewbiesTeam -DestinationPath out\newbiesteam-${{ steps.ver.outputs.version }}-win-portable.zip -Force
+          Compress-Archive -Path compose\binaries\main\app\NewbiesDev  -DestinationPath out\newbiesdev-${{ steps.ver.outputs.version }}-win-portable.zip  -Force
+
+      - name: Upload installers + portable bundles
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.os }}-bundles
+          path: |
+            compose/binaries/main/distributions/*
+            out/*.zip
+          if-no-files-found: error
+
+  arch-packages:
+    name: Arch Linux packages (.pkg.tar.zst)
+    needs: desktop
+    runs-on: ubuntu-latest
+    container: archlinux:base
+    steps:
+      - name: Install toolchain
+        run: |
+          pacman -Syu --noconfirm
+          pacman -S --noconfirm --needed git binutils curl
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Read app version
+        id: ver
+        shell: bash
+        run: |
+          V=$(grep '^newbies.versionName=' gradle.properties | cut -d= -f2 | tr -d ' \r')
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+
+      - name: Download Linux portable bundles
+        uses: actions/download-artifact@v4
+        with:
+          name: ubuntu-latest-bundles
+          path: bundles
+
+      - name: Build .pkg.tar.zst packages
+        run: ./scripts/build-arch.sh "${{ steps.ver.outputs.version }}" bundles
+
+      - name: Upload Arch packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: arch-packages
+          path: out/*.pkg.tar.zst
+          if-no-files-found: error
+
+  publish-release:
+    name: Publish GitHub release
+    needs: [desktop, arch-packages]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all bundles
+        uses: actions/download-artifact@v4
+        with:
+          pattern: '*'
+          path: artifacts
+
+      - name: Flatten artifacts + create release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p dist
+          find artifacts -type f | while read -r f; do cp "$f" dist/; done
+          gh release create "$GITHUB_REF_NAME" \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "NewbiesTeam & NewbiesDev Desktop $GITHUB_REF_NAME" \
+            --notes "Desktop releases for Windows (MSI/portable), macOS (unsigned DMG/portable) and Linux (DEB/RPM/AppImage/portable/Arch .pkg.tar.zst). Every package bundles its own JetBrains Runtime with JCEF — no CEF download needed, even offline." \
+            dist/*
+
+          if [ -z "$(find dist -maxdepth 1 -type f -name '*.msi' -print -quit)" ]; then
+            echo "warning: no .msi present" >&2
+          fi

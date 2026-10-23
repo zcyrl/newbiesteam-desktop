@@ -1,0 +1,32 @@
+# Gradle
+.gradle/
+build/
+*/build/*
+!*/build.gradle.kts
+.kotlin/
+
+# IDE
+.idea/
+*.iml
+*.ipr
+*.iws
+.vscode/
+
+# KCEF auto-download cache used during plain system-JDK dev runs
+kcef-bundle/
+.cef-cache/
+
+# Arch build workareas
+/.archbuild/
+/bundles/
+/out/
+/archbuild/
+
+# Logs
+*.log
+hs_err_pid*
+replay_pid*
+
+# OS junk
+.DS_Store
+Thumbs.db

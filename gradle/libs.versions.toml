@@ -1,0 +1,21 @@
+[versions]
+kotlin = "2.4.10"
+gradlePluginCompose = "1.9.3"
+composeMultiplatform = "1.9.3"
+webview = "2.0.3"
+kcef = "2024.04.20.4"
+kotlinxSerialization = "1.12.0"
+kotlinxCoroutines = "1.11.0"
+
+[plugins]
+compose-plugin = { id = "org.jetbrains.compose", version.ref = "gradlePluginCompose" }
+kotlin-multiplatform = { id = "org.jetbrains.kotlin.multiplatform", version.ref = "kotlin" }
+kotlin-compose-compiler = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
+kotlin-serialization = { id = "org.jetbrains.kotlin.plugin.serialization", version.ref = "kotlin" }
+
+[libraries]
+compose-multiplatform = { module = "org.jetbrains.compose:compose-gradle-plugin", version.ref = "gradlePluginCompose" }
+webview = { module = "io.github.kevinnzou:compose-webview-multiplatform", version.ref = "webview" }
+kcef = { module = "dev.datlag:kcef", version.ref = "kcef" }
+kotlinx-serialization = { module = "org.jetbrains.kotlinx:kotlinx-serialization-json", version.ref = "kotlinxSerialization" }
+kotlinx-coroutines = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core", version.ref = "kotlinxCoroutines" }

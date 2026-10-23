@@ -1,0 +1,68 @@
+# Maintainer: NewbiesTeam <softbrick@newbiesteam.dev>
+# Contributor: zcyrl
+# Modelled on the same self-contained layout as the Windows MSI and macOS DMG:
+# the bundle ships its own JetBrains Runtime + JCEF, so no jre dependency is
+# declared — the app boots identically on Arch, Debian, Fedora and Windows 11.
+
+pkgname=newbiesteam-desktop
+pkgver=3.1.1
+pkgrel=1
+pkgdesc="NewbiesTeam — GT 20 Pro Web Hub (desktop companion, bundled JBR+JCEF)"
+url="https://github.com/zcyrl/newbiesteam-desktop"
+arch=('x86_64')
+license=('custom:unofficial')
+source=(
+  "newbiesteam-$pkgver-linux-portable.zip::https://github.com/zcyrl/newbiesteam-desktop/releases/download/v$pkgver/newbiesteam-$pkgver-linux-portable.zip"
+  "newbiesteam-icon.png"
+)
+sha256sums=('SKIP' 'SKIP')
+options=('!strip' '!emptydirs')
+depends=()
+optdepends=()
+makedepends=('unzip')
+backup=()
+install=
+
+prepare() {
+  cd "$srcdir"
+  rm -rf "app-unpacked"
+  unzip -q "newbiesteam-$pkgver-linux-portable.zip" -d "app-unpacked"
+}
+
+package() {
+  local appdir
+  appdir=$(find "$srcdir/app-unpacked" -maxdepth 1 -type d -name 'NewbiesTeam' | head -1)
+  if [ -z "$appdir" ]; then
+    echo "NewbiesTeam bundle folder missing from portable zip" >&2
+    return 1
+  fi
+
+  # Self-contained app image (includes runtime/ with JBR + JCEF natives).
+  install -d -m 755 "$pkgdir/opt/newbiesteam-desktop"
+  cp -a "$appdir/." "$pkgdir/opt/newbiesteam-desktop/"
+  chmod -R a+rX "$pkgdir/opt/newbiesteam-desktop"
+  chmod 755 "$pkgdir/opt/newbiesteam-desktop/bin/NewbiesTeam"
+
+  # Executable symlink on PATH.
+  install -d -m 755 "$pkgdir/usr/bin"
+  ln -sf /opt/newbiesteam-desktop/bin/NewbiesTeam "$pkgdir/usr/bin/newbiesteam"
+
+  # Freedesktop integration (menu + icons), mirroring the .deb metadata.
+  install -d -m 755 "$pkgdir/usr/share/applications"
+  install -d -m 755 "$pkgdir/usr/share/icons/hicolor/512x512/apps"
+  install -m 644 "$srcdir/newbiesteam-icon.png" \
+    "$pkgdir/usr/share/icons/hicolor/512x512/apps/newbiesteam.png"
+
+  cat > "$pkgdir/usr/share/applications/newbiesteam.desktop" <<EOF
+[Desktop Entry]
+Type=Application
+Version=$pkgver
+Name=NewbiesTeam
+Comment=GT 20 Pro Web Hub (desktop companion)
+Exec=/opt/newbiesteam-desktop/bin/NewbiesTeam
+Icon=newbiesteam
+Terminal=false
+Categories=Network;Utility;
+StartupWMClass=NewbiesTeam
+EOF
+}
